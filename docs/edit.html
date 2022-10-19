@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <title>Edit Credentials</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
+    <link rel="icon" href="./assets/common/images/favicon.png" referrerpolicy="no-referrer" />
+    <link rel="stylesheet" type="text/css" href="./assets/common/styles/ubisecure.css"
+        referrerpolicy="no-referrer" />
+    <style type="text/css">
+        :root {
+            --font-size: 12pt;
+            --grid-main-area-width: minmax(auto, 72em);
+        }
+
+        section>form textarea {
+            white-space: pre;
+            word-wrap: normal;
+            word-break: normal;
+            overflow-x: hidden;
+            overflow-y: scroll;
+            font-family: monospace;
+            resize: vertical;
+            height: 10em;
+        }
+    </style>
+    <script type="module">
+        import { parsed } from "./assets/common/modules/document-promises.js";
+        import { create_repository_menu, set_button_href_handlers, set_table_select_handlers } from "./assets/common/modules/helper-module.js";
+        import * as Settings from "./assets/local/modules/settings.js";
+        import { notNull, ifNotEmpty, ifNotNull } from "./assets/local/modules/common.js";
+        import { jsonToString } from "./assets/local/modules/utils.js";
+        async function build_page() {
+            await parsed;
+            await create_repository_menu();
+            await set_button_href_handlers();
+            document.querySelectorAll("table.select").forEach(set_table_select_handlers);
+            await initCredentialsTable();
+        }
+        build_page();
+
+        async function initCredentialsTable() {
+            await parsed;
+            const section = document.getElementById("CredentialsTable");
+            const form = section.querySelector("form");
+            const tbody = section.querySelector("tbody");
+            form.addEventListener("reset", async e => {
+                tbody.innerHTML = "";
+                const settings = Settings.readSettings();
+                for (const i in settings.credentials) {
+                    const cred = settings.credentials[i];
+                    const tr = document.createElement("tr");
+                    tr.setAttribute("data-id", i);
+
+                    let td = document.createElement("td");
+                    td.innerText = cred.instant;
+                    tr.appendChild(td);
+
+                    td = document.createElement("td");
+                    td.innerText = `${cred.user.name} (${cred.user.displayName})`;
+                    tr.appendChild(td);
+
+                    td = document.createElement("td");
+                    td.innerText = cred.id;
+                    tr.appendChild(td);
+
+                    tbody.appendChild(tr);
+                }
+            });
+            form.addEventListener("submit", async e => {
+                e.preventDefault();
+                let id = null;
+                try {
+                    const cred = JSON.parse(form.elements["PublicKeyCredential"].value);
+                    id = cred.id;
+                    const settings = Settings.readSettings();
+                    Settings.addCredential(settings, cred.user, cred.id, cred.credentialPublicKey);
+                } catch {
+                    // ignore
+                }
+                form.reset();
+                setTimeout(() => {
+                    form.dispatchEvent(new Event("reset"));
+                    ifNotEmpty(id, () => {
+                        const tr = tbody.querySelector(`tr[data-id=${JSON.stringify(id)}]`);
+                        ifNotNull(tr, () => tr.dispatchEvent(new Event("click", { bubbles: true })));
+                    })
+                });
+            });
+            form.elements["remove"].addEventListener("click", async e => {
+                const tr = tbody.querySelector("tr[data-id].selected");
+                if (notNull(tr)) {
+                    const id = tr.getAttribute("data-id");
+                    const settings = Settings.readSettings();
+                    delete settings.credentials[id];
+                    Settings.saveSettings(settings);
+                }
+                form.reset();
+                setTimeout(() => form.dispatchEvent(new Event("reset")));
+            });
+            form.elements["removeAll"].addEventListener("click", async e => {
+                Settings.saveSettings(null);
+                form.reset();
+                setTimeout(() => form.dispatchEvent(new Event("reset")));
+            });
+            form.elements["get"].addEventListener("click", async e => {
+                const tr = tbody.querySelector("tr[data-id].selected");
+                if (notNull(tr)) {
+                    const id = tr.getAttribute("data-id");
+                    const cred = Settings.getCredential(Settings.readSettings(), id);
+                    if(notNull(cred)) {
+                        const q = new URLSearchParams();
+                        q.append("id", cred.id);
+                        location.assign("get.html#" + q)
+                    }
+                }
+            });
+            tbody.addEventListener("click", async e => {
+                e.preventDefault();
+                form.elements["PublicKeyCredential"].value = "";
+                const tr = e.target.closest("tr[data-id]");
+                if (notNull(tr)) {
+                    const id = tr.getAttribute("data-id");
+                    const cred = Settings.getCredential(Settings.readSettings(), id);
+                    form.elements["PublicKeyCredential"].value = jsonToString(cred);
+                }
+            });
+            form.dispatchEvent(new Event("reset"));
+        }
+    </script>
+</head>
+
+<body>
+
+    <header>
+        <nav>
+            <button href="./index.html" target="_self">
+                <icon class="home"></icon>&nbsp;<span>Home</span>
+            </button>
+            <button href="create.html" target="_self">Create</button>
+            <button href="get.html" target="_self">Get</button>
+            <button href="edit.html" target="_self">Edit</button>
+            <div>
+                <button>
+                    <span>Repositories</span>&nbsp;<icon class="arrow-drop-down"></icon>
+                </button>
+                <div id="repository_menu">
+                    <button href="https://github.com/psteniusubi?tab=repositories">All Repositories</button>
+                </div>
+            </div>
+        </nav>
+        <nav>
+            <button href="https://ubisecure.com" class="ubisecure-standard-logo-h-reverse">&nbsp;</button>
+        </nav>
+    </header>
+
+    <main>
+        <section class="outline" id="CredentialsTable">
+            <h2>Edit Credentials</h2>
+            <section class="scroll">
+                <table class="hover select">
+                    <thead>
+                        <tr>
+                            <th>Instant</th>
+                            <th>User</th>
+                            <th>Id</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </section>
+            <form>
+                <div>
+                    <button type="button" name="get">Get</button>
+                    <button type="submit" name="add">Add</button>
+                    <button type="button" name="remove">Remove</button>
+                    <button type="button" name="removeAll">Remove All</button>
+                    <button type="reset">Reset</button>
+                </div>
+                <div><span>PublicKeyCredential</span></div>
+                <div>
+                    <textarea class="flex1" name="PublicKeyCredential" placeholder="PublicKeyCredential"></textarea>
+                </div>
+            </form>
+        </section>
+    </main>
+
+</body>
+
+</html>

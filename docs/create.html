@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <title>WebAuthn Create Credential</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
+    <link rel="icon" href="./assets/common/images/favicon.png" referrerpolicy="no-referrer" />
+    <link rel="stylesheet" type="text/css" href="./assets/common/styles/ubisecure.css" />
+    <link rel="stylesheet" type="text/css" href="./assets/local/styles/collapsed.css" />
+    <style type="text/css">
+        :root {
+            --font-size: 12pt;
+            --grid-main-area-width: minmax(auto, 72em);
+        }
+
+        section>form :is(input, select):invalid,
+        section>form .error {
+            outline: 2px solid salmon;
+            outline-offset: -2px;
+        }
+
+        section.collapsed>h2>label,
+        section.collapsed>h3>label {
+            cursor: pointer;
+        }
+
+        section>form textarea {
+            white-space: pre;
+            word-wrap: normal;
+            word-break: normal;
+            overflow-x: hidden;
+            overflow-y: scroll;
+            font-family: monospace;
+            resize: vertical;
+            height: 10em;
+        }
+    </style>
+    <script type="module">
+        import { parsed } from "./assets/common/modules/document-promises.js";
+        import { create_repository_menu, set_button_href_handlers } from "./assets/common/modules/helper-module.js";
+        import * as WebAuthn from "./assets/local/modules/WebAuthnTypes.js";
+        import * as Decoder from "./assets/local/modules/WebAuthnDecoder.js";
+        import { atobUrlSafe, btoaUrlSafe, decodeArray } from "./assets/local/modules/base64.js";
+        import { getRandomBytes } from "./assets/local/modules/Crypto.js";
+        import { jsonToString, toggle_section, clear_error } from "./assets/local/modules/utils.js";
+        import { ifNotEmpty } from "./assets/local/modules/common.js";
+        import * as Settings from "./assets/local/modules/settings.js";
+        async function build_page() {
+            await parsed;
+            await create_repository_menu();
+            await set_button_href_handlers();
+            await isUserVerifyingPlatformAuthenticatorAvailable();
+            await initPublicKeyCredentialCreationOptions();
+        }
+        build_page();
+
+        async function isUserVerifyingPlatformAuthenticatorAvailable() {
+            await parsed;
+            const section = document.getElementById("PublicKeyCredential");
+            const form = section.querySelector("form");
+            try {
+                const value = await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
+                form["isUserVerifyingPlatformAuthenticatorAvailable"].value = value;
+                form["isUserVerifyingPlatformAuthenticatorAvailable"].classList.toggle("error", value === false);
+                toggle_section("PublicKeyCredential", value === false);
+            } catch (error) {
+                input.value = error.toString();
+                input.classList.add("error");
+                toggle_section("PublicKeyCredential", true);
+            }
+        }
+
+        async function initPublicKeyCredentialCreationOptions() {
+            await parsed;
+            document.getElementById("_origin").innerText = location.origin;
+            document.getElementById("_host").innerText = location.host;
+            const section = document.getElementById("PublicKeyCredentialCreationOptions");
+            const form = section.querySelector("form");
+            Settings.createCredentialsList(form.elements["excludeCredentials"], Settings.readSettings());
+            form.addEventListener("input", async e => {
+                const options = await createPublicKeyCredentialCreationOptions();
+                const json = jsonToString(options.toJson());
+                form["CredentialCreationOptions"].value = json;
+            });
+            form.addEventListener("reset", async e => {
+                clear_error("PublicKeyCredentialCreationOptions");
+                toggle_section("PublicKeyCredentialCreationOptions", true);
+                clear_error("AuthenticatorAttestationResponse");
+                toggle_section("AuthenticatorAttestationResponse", false);
+
+                const response = document.getElementById("AuthenticatorAttestationResponse");
+                response.querySelector("form").reset();
+
+                // trigger input event after reset event
+                setTimeout(() => form.dispatchEvent(new InputEvent("input")));
+            });
+            form.addEventListener("submit", async e => {
+                e.preventDefault();
+                const options = await createPublicKeyCredentialCreationOptions();
+                const o = options.toJson();
+                form["CredentialCreationOptions"].value = jsonToString(o);
+                const response = document.getElementById("AuthenticatorAttestationResponse");
+                const out = response.querySelector("form");
+                out.reset();
+                try {
+                    const attestation_response = new WebAuthn.PublicKeyCredential(await navigator.credentials.create(o));
+                    out["PublicKeyCredential"].value = jsonToString(attestation_response.toJson());
+                    const clientDataJSON = Decoder.decodeClientDataJSON(attestation_response.response.clientDataJSON);
+                    out["clientDataJSON"].value = jsonToString(clientDataJSON);
+                    const attestationObject = Decoder.decodeAttestationObject(attestation_response.response.attestationObject);
+                    out["attestationObject"].value = jsonToString(attestationObject);
+                    const authData = Decoder.decodeAuthenticatorData(attestationObject.authData);
+                    out["authData"].value = jsonToString(authData.toJson());
+                    out["credentialPublicKey"].value = jsonToString(authData.attestedCredentialData.credentialPublicKey);
+                    clear_error("PublicKeyCredentialCreationOptions");
+                    toggle_section("PublicKeyCredentialCreationOptions", false);
+                    clear_error("AuthenticatorAttestationResponse");
+                    toggle_section("AuthenticatorAttestationResponse", true);
+                    const settings = Settings.readSettings();
+                    Settings.addCredential(settings, options.publicKey.user, attestation_response.id, authData.attestedCredentialData.credentialPublicKey, attestation_response.response);
+                } catch (error) {
+                    toggle_section("AuthenticatorAttestationResponse", true);
+                    out["PublicKeyCredential"].value = error.toString();
+                    out["PublicKeyCredential"].classList.add("error");
+                }
+            });
+            toggle_section("PublicKeyCredentialCreationOptions", true);
+            toggle_section("AuthenticatorAttestationResponse", false);
+            form.dispatchEvent(new InputEvent("input"));
+        }
+
+        async function createPublicKeyCredentialCreationOptions() {
+            await parsed;
+            const section = document.getElementById("PublicKeyCredentialCreationOptions");
+            const form = section.querySelector("form");
+            const publicKey = new WebAuthn.PublicKeyCredentialCreationOptions();
+            publicKey.rp.name = ifNotEmpty(form["rp.name"].value);
+            publicKey.rp.id = ifNotEmpty(form["rp.id"].value);
+            publicKey.user.name = ifNotEmpty(form["user.name"].value);
+            publicKey.user.displayName = ifNotEmpty(form["user.displayName"].value);
+            publicKey.challenge = getRandomBytes(20);
+            publicKey.pubKeyCredParams = [
+                //WebAuthn.PublicKeyCredentialParameters.publicKey(-7),
+                //WebAuthn.PublicKeyCredentialParameters.publicKey(-257),
+		WebAuthn.PublicKeyCredentialParameters.publicKey(-8),
+            ];
+            publicKey.timeout = ifNotEmpty(form["timeout"].value, Number);
+            const excludeCredentials = [];
+            ifNotEmpty(form["excludeCredentials"].value, value => {
+                if (value === "*") {
+                    const settings = Settings.readSettings();
+                    for (const i in settings.credentials) {
+                        const cred = settings.credentials[i];
+                        excludeCredentials.push(WebAuthn.PublicKeyCredentialDescriptor.publicKey(decodeArray(cred.id)));
+                    }
+                } else {
+                    excludeCredentials.push(WebAuthn.PublicKeyCredentialDescriptor.publicKey(decodeArray(value)));
+                }
+            });
+            publicKey.excludeCredentials = excludeCredentials;
+            publicKey.authenticatorSelection.authenticatorAttachment = ifNotEmpty(form["authenticatorSelection.authenticatorAttachment"].value);;
+            publicKey.authenticatorSelection.residentKey = ifNotEmpty(form["authenticatorSelection.residentKey"].value);;
+            publicKey.authenticatorSelection.userVerification = ifNotEmpty(form["authenticatorSelection.userVerification"].value);;
+            publicKey.attestation = ifNotEmpty(form["attestation"].value);
+            const options = new WebAuthn.CredentialCreationOptions();
+            options.publicKey = publicKey;
+            return options;
+        }
+    </script>
+</head>
+
+<body>
+
+    <header>
+        <nav>
+            <button href="./index.html" target="_self">
+                <icon class="home"></icon>&nbsp;<span>Home</span>
+            </button>
+            <button href="create.html" target="_self">Create</button>
+            <button href="get.html" target="_self">Get</button>
+            <button href="edit.html" target="_self">Edit</button>
+            <div>
+                <button>
+                    <span>Repositories</span>&nbsp;<icon class="arrow-drop-down"></icon>
+                </button>
+                <div id="repository_menu">
+                    <button href="https://github.com/psteniusubi?tab=repositories">All Repositories</button>
+                </div>
+            </div>
+        </nav>
+        <nav>
+            <button href="https://ubisecure.com" class="ubisecure-standard-logo-h-reverse">&nbsp;</button>
+        </nav>
+    </header>
+
+    <main>
+        <section class="outline">
+            <section id="PublicKeyCredential" class="collapsed">
+                <input type="checkbox" id="PublicKeyCredential_hide" checked />
+                <h2><label for="PublicKeyCredential_hide">PublicKeyCredential</label></h2>
+                <section>
+                    <form autocomplete="off" novalidate>
+                        <label>
+                            <span>isUserVerifyingPlatformAuthenticatorAvailable</span>
+                            <input class="flex1" type="text" placeholder="isUserVerifyingPlatformAuthenticatorAvailable"
+                                name="isUserVerifyingPlatformAuthenticatorAvailable" readonly />
+                        </label>
+                    </form>
+                </section>
+            </section>
+        </section>
+
+        <section class="outline">
+            <section id="PublicKeyCredentialCreationOptions" class="collapsed">
+                <input type="checkbox" id="PublicKeyCredentialCreationOptions_hide" checked />
+                <h2><label for="PublicKeyCredentialCreationOptions_hide">PublicKeyCredentialCreationOptions</label></h2>
+                <section>
+                    <form autocomplete="off" novalidate="">
+                        <label>
+                            <span>rp.name</span>
+                            <select class="flex1" name="rp.name" placeholder="rp.name" required>
+                                <option></option>
+                                <option selected="selected" id="_origin"></option>
+                                <option>webauthn-tester</option>
+                            </select>
+                        </label>
+                        <label>
+                            <span>rp.id</span>
+                            <select class="flex1" name="rp.id" placeholder="rp.id">
+                                <option></option>
+                                <option id="_host"></option>
+                            </select>
+                        </label>
+                        <label>
+                            <span>user.name</span>
+                            <input class="flex1" type="text" name="user.name" placeholder="user.name"
+                                value="hello@example.com" required>
+                        </label>
+                        <label>
+                            <span>user.displayName</span>
+                            <input class="flex1" type="text" name="user.displayName" placeholder="user.displayName"
+                                value="Hello Example" required>
+                        </label>
+                        <label>
+                            <span>timeout</span>
+                            <select class="flex1" name="timeout" placeholder="timeout">
+                                <option></option>
+                                <option>5000</option>
+                                <option>15000</option>
+                                <option>30000</option>
+                            </select>
+                        </label>
+                        <label>
+                            <span>excludeCredentials</span>
+                            <select class="flex1" name="excludeCredentials" placeholder="excludeCredentials">
+                                <option></option>
+                                <option>All</option>
+                            </select>
+                        </label>
+                        <label>
+                            <span>authenticatorSelection.authenticatorAttachment</span>
+                            <select class="flex1" name="authenticatorSelection.authenticatorAttachment"
+                                placeholder="authenticatorSelection.authenticatorAttachment">
+                                <option></option>
+                                <option>platform</option>
+                                <option>cross-platform</option>
+                            </select>
+                        </label>
+                        <label>
+                            <span>authenticatorSelection.residentKey</span>
+                            <select class="flex1" name="authenticatorSelection.residentKey"
+                                placeholder="authenticatorSelection.residentKey">
+                                <option></option>
+                                <option>discouraged</option>
+                                <option>preferred</option>
+                                <option>required</option>
+                            </select>
+                        </label>
+                        <label>
+                            <span>authenticatorSelection.userVerification</span>
+                            <select class="flex1" name="authenticatorSelection.userVerification"
+                                placeholder="authenticatorSelection.userVerification">
+                                <option></option>
+                                <option>required</option>
+                                <option>preferred</option>
+                                <option>discouraged</option>
+                            </select>
+                        </label>
+                        <label>
+                            <span>attestation</span>
+                            <select class="flex1" name="attestation" placeholder="attestation">
+                                <option></option>
+                                <option>none</option>
+                                <option>indirect</option>
+                                <option>direct</option>
+                                <option>enterprise</option>
+                            </select>
+                        </label>
+                        <label>
+                            <textarea class="flex1" name="CredentialCreationOptions"
+                                placeholder="CredentialCreationOptions" readonly></textarea>
+                        </label>
+                        <div>
+                            <button type="submit">Create</button>
+                            <button type="reset">Reset</button>
+                        </div>
+                    </form>
+                </section>
+            </section>
+            <section id="AuthenticatorAttestationResponse" class="collapsed">
+                <input type="checkbox" id="AuthenticatorAttestationResponse_hide" checked />
+                <h3><label for="AuthenticatorAttestationResponse_hide">AuthenticatorAttestationResponse</label></h3>
+                <section>
+                    <form autocomplete="off">
+                        <div><span>PublicKeyCredential</span></div>
+                        <div>
+                            <textarea class="flex1" name="PublicKeyCredential" placeholder="PublicKeyCredential"
+                                readonly></textarea>
+                        </div>
+                        <div><span>clientDataJSON</span></div>
+                        <div>
+                            <textarea class="flex1" name="clientDataJSON" placeholder="clientDataJSON"
+                                readonly></textarea>
+                        </div>
+
+                        <div><span>attestationObject</span></div>
+                        <div>
+                            <textarea class="flex1" name="attestationObject" placeholder="attestationObject"
+                                readonly></textarea>
+                        </div>
+                        <div><span>authData</span></div>
+                        <div>
+                            <textarea class="flex1" name="authData" placeholder="authData" readonly></textarea>
+                        </div>
+                        <div><span>credentialPublicKey</span></div>
+                        <div>
+                            <textarea class="flex1" name="credentialPublicKey" placeholder="credentialPublicKey"
+                                readonly></textarea>
+                        </div>
+                    </form>
+                </section>
+            </section>
+        </section>
+    </main>
+
+</body>
+
+</html>

@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>create.html</title>
+    <link rel="stylesheet" type="text/css" href="../../js-tester/assets/common/styles/js-tester.css" />
+    <script type="module">
+        import { describeClass, console, assert } from "../../js-tester/assets/common/modules/js-tester.js";
+        import { decodeArray, encodeArray } from "../assets/local/modules/base64.js";
+        import * as WebAuthn from "../assets/local/modules/WebAuthnTypes.js";
+        import * as Decoder from "../assets/local/modules/WebAuthnDecoder.js";
+        import { getRandomBytes } from "../assets/local/modules/Crypto.js";
+        function replacer(k, v) {
+            if (v instanceof ArrayBuffer) {
+                return replacer(k, new Uint8Array(v));
+            }
+            if (v instanceof Uint8Array) {
+                return encodeArray(v);
+            }
+            return v;
+        }
+        const ifNotNull = (value, func) => (value === null || value === undefined)
+            ? undefined
+            : func(value);
+        class CredentialCreationTests {
+            testEmpty1() {
+                const options = new WebAuthn.CredentialCreationOptions();
+                assert.assertIn("publicKey", options);
+                assert.assertIn("authenticatorSelection", options.publicKey);
+                assert.assertIn("authenticatorAttachment", options.publicKey.authenticatorSelection);
+                assert.assertTrue(options.publicKey.authenticatorSelection.isEmpty());
+
+                const json = options.toJson();
+                assert.assertIn("publicKey", json);
+                assert.assertIn("authenticatorSelection", json.publicKey);
+                assert.assertNotIn("authenticatorAttachment", json.publicKey.authenticatorSelection);
+
+                console.log(JSON.stringify(json, replacer, 2));
+            }
+            async testMinimal1() {
+                const creation = new WebAuthn.CredentialCreationOptions();
+                creation.publicKey.rp.name = location.origin;
+                creation.publicKey.user.name = "hello@example.com";
+                creation.publicKey.user.displayName = "Hello Example";
+                creation.publicKey.challenge = getRandomBytes(20);
+                creation.publicKey.pubKeyCredParams = [
+                    WebAuthn.PublicKeyCredentialParameters.publicKey(-7),
+                    WebAuthn.PublicKeyCredentialParameters.publicKey(-257),
+                ];
+                let json = creation.toJson();
+                console.log(JSON.stringify(json, replacer, 2));
+
+                const attestation_response = new WebAuthn.PublicKeyCredential(await navigator.credentials.create(json));
+                json = attestation_response.toJson();
+                console.log(JSON.stringify(json, replacer, 2));
+
+                const clientDataJSON = Decoder.decodeClientDataJSON(attestation_response.response.clientDataJSON);
+                console.log(JSON.stringify(clientDataJSON, replacer, 2));
+
+                const attestationObject = Decoder.decodeAttestationObject(attestation_response.response.attestationObject);
+                console.log(JSON.stringify(attestationObject, replacer, 2));
+
+                const authData = Decoder.decodeAuthenticatorData(attestationObject.authData);
+                console.log(JSON.stringify(authData.toJson(), replacer, 2));
+
+                const request = new WebAuthn.CredentialRequestOptions();
+                request.publicKey.challenge = getRandomBytes(20);
+                request.publicKey.allowCredentials = [
+                    WebAuthn.PublicKeyCredentialDescriptor.publicKey(attestation_response.rawId)
+                ];
+                json = request.toJson();
+                console.log(JSON.stringify(json, replacer, 2));
+
+                const assertion_response = new WebAuthn.PublicKeyCredential(await navigator.credentials.get(json));
+                json = assertion_response.toJson();
+                console.log(JSON.stringify(json, replacer, 2));
+            }
+            async testRequest1() {
+                const credentialPublicKey = {
+                    "kty": "RSA",
+                    "alg": "RS256",
+                    "n": "t_fiZZ9fmkoLGlymGG380_lx2wCKYHi0ojpUEV3hdhJG3uaw9cc7-aP6pIxQVAQM0QcGm8xWnnPL7uq-w2XZ9KvffOxSbMp1vYL0L7JxmSLdzryyjjXDogPGyFHHTkiEwODN4kxJnoxP3aJZ1kfCsgTO0m5UhjBOvyQwJLIBNWo7gUi8Ty76qRfaH6nPnZ3ENY0zVJTfY2AKpoKY5297v5KDAP19bqXYRZ4qHSiCkA3UHL-SjHMhX3NVC7my9IimojadG-16M9-uBvNQrPzVe7471Bv9PX9NYddJ1-uU6zP7bOAhwN0heahzJrocSFjzFvVHhotDYhc97cHrigv7FQ",
+                    "e": "AQAB"
+                };
+                const request = new WebAuthn.CredentialRequestOptions();
+                request.publicKey.challenge = getRandomBytes(20);
+                request.publicKey.allowCredentials = [
+                    WebAuthn.PublicKeyCredentialDescriptor.publicKey(decodeArray("gs67mmLsNRvYz7w1p0Wr1UMYZcM8VvW4SYHN5Y6FE3c"))
+                ];
+                let json = request.toJson();
+                console.log(JSON.stringify(json, replacer, 2));
+
+                const assertion_response = new WebAuthn.PublicKeyCredential(await navigator.credentials.get(json));
+                console.log(JSON.stringify(assertion_response.toJson(), replacer, 2));
+
+                const assertion_clientDataJSON = Decoder.decodeClientDataJSON(assertion_response.response.clientDataJSON);
+                console.log(JSON.stringify(assertion_clientDataJSON, replacer, 2));
+
+                const authDataGet = Decoder.decodeAuthenticatorData(assertion_response.response.authenticatorData);
+                console.log(JSON.stringify(authDataGet.toJson(), replacer, 2));
+
+                const valid = await Decoder.verifyAssertionSignature(assertion_response, credentialPublicKey);
+                assert.assertTrue(valid);
+            }
+        }
+        describeClass(CredentialCreationTests);
+    </script>
+</head>
+
+<body>
+    <section id="report"></section>
+</body>
+
+</html>
